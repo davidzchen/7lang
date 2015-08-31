@@ -6,7 +6,7 @@ Making music with Lua.
 Background
 ----------
 
-The book uses Cmake to build the C++ code. We are using [Bazel][http://bazel.io]
+The book uses Cmake to build the C++ code. We are using [Bazel](http://bazel.io)
 instead.
 
 This solution does not require you to have Lua or RtMidi installed on your
