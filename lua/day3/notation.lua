@@ -60,7 +60,41 @@ local function play(note, duration)
   midi_send(NOTE_UP, note, VELOCITY)
 end
 
+-- Takes an array of notes `t`, creates a new function `play_part` that plays
+-- these particular notes in order, and schedules this part to be played as soon
+-- as the top-level song calls run().
+local function part(t)
+  local function play_part()
+    for i = 1, #t do
+      play(t[i].note, t[i].duration)
+    end
+  end
+  scheduler.schedule(0.0, coroutine.create(play_part))
+end
+
+local function set_tempo(bpm)
+  tempo = bpm
+end
+
+local function go()
+  scheduler.run()
+end
+
+-- Update global metatable to call `parse_note` for note lookup rather than
+-- performing global variable lookup. If the note does not exist, then
+-- perform global variable lookup in _G.
+local mt = {
+  __index = function (t, s)
+    local result = parse_note(s)
+    return result or rawget(t, s)
+  end
+}
+setmetatable(_G, mt)
+
 return {
   parse_note = parse_note,
-  play = play
+  play = play,
+  part = part,
+  set_tempo = set_tempo,
+  go = go,
 }
