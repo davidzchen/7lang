@@ -47,6 +47,59 @@ class MidiOut {
 
 MidiOut* MidiOut::instance_ = nullptr;
 
+// C++ Wrapper for the Lua API.
+class Lua {
+ public:
+  Lua() {}
+
+  // Initializes the Lua API.
+  bool Init() {
+    lua_ = luaL_newstate();
+    if (lua_ == nullptr) {
+      return false;
+    }
+    luaL_openlibs(lua_);
+    return true;
+  }
+
+  // Registers a C function as a global Lua function.
+  void PushCFunction(lua_CFunction function, const char* name) {
+    if (lua_ == nullptr || name == nullptr) {
+      return;
+    }
+    lua_pushcfunction(lua_, function);
+    lua_setglobal(lua_, name);
+  }
+
+  // Runs the provided Lua file.
+  bool DoFile(const char* file_name) {
+    if (lua_ == nullptr || file_name == nullptr) {
+      return false;
+    }
+    if (luaL_dofile(lua_, file_name) != 0) {
+      last_error_ = lua_tostring(lua_, -1);
+      return false;
+    }
+    return true;
+  }
+
+  // Returns the last error pushed by Lua.
+  const std::string GetError() {
+    return std::string(last_error_);
+  }
+
+  // Closes the Lua API.
+  void Close() {
+    if (lua_ != nullptr) {
+      lua_close(lua_);
+    }
+  }
+
+ private:
+  lua_State* lua_;
+  const char* last_error_;
+};
+
 // Sends a MIDI note.
 int midi_send(lua_State* lua) {
   double status = lua_tonumber(lua, -3);
@@ -71,23 +124,25 @@ int main(int argc, const char** argv) {
   }
 
   // Initialize the Lua API.
-  lua_State* lua = luaL_newstate();
-  luaL_openlibs(lua);
+  Lua lua;
+  if (!lua.Init()) {
+    std::cerr << "Error initializing Lua." << std::endl;
+    return -1;
+  }
 
   // Register midi_send function with Lua and store it in the midi_send
   // variable.
-  lua_pushcfunction(lua, midi_send);
-  lua_setglobal(lua, "midi_send");
+  lua.PushCFunction(midi_send, "midi_send");
 
   // Run the provided Lua file.
-  if (luaL_dofile(lua, argv[1]) != 0) {
+  if (!lua.DoFile(argv[1])) {
     // Exercise(medium, 2): Report any error information returned from the Lua
     // interpreter.
     std::cerr << "Error playing " << argv[1] << ": "
-              << lua_tostring(lua, -1) << std::endl;
+              << lua.GetError() << std::endl;
   }
 
   // Close the Lua API.
-  lua_close(lua);
+  lua.Close();
   return 0;
 }
