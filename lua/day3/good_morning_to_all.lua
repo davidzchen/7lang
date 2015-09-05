@@ -1,6 +1,4 @@
-song = require 'notation'
-
-song.part {
+notation.part {
   D4q,
   E4q,
   D4q,
@@ -8,4 +6,4 @@ song.part {
   Fs4h,
 }
 
-song.go()
+notation.go()

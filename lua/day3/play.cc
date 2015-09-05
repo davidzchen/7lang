@@ -1,5 +1,6 @@
 #include <iostream>
 #include <cstdint>
+#include <set>
 #include <vector>
 
 extern "C" {
@@ -47,6 +48,73 @@ class MidiOut {
 
 MidiOut* MidiOut::instance_ = nullptr;
 
+class LuaStates {
+ public:
+  static LuaStates* Get() {
+    if (instance_ == nullptr) {
+      instance_ = new LuaStates();
+    }
+    return instance_;
+  }
+
+  lua_State* Add() {
+    lua_State* state = luaL_newstate();
+    luaL_openlibs(state);
+    if (state == nullptr) {
+      return nullptr;
+    }
+    states_.insert(state);
+    return state;
+  }
+
+  void ForEachState(std::function<void(lua_State* state)> cb) {
+    for (lua_State* state : states_) {
+      cb(state);
+    }
+  }
+
+  void Close(lua_State* state) {
+    lua_close(state);
+  }
+
+ private:
+  LuaStates() {}
+
+  static LuaStates* instance_;
+
+  std::set<lua_State*> states_;
+};
+
+LuaStates* LuaStates::instance_ = nullptr;
+
+static void LuaStop(lua_State* lua, lua_Debug* ar) {
+  (void)ar;  // unused
+  lua_sethook(lua, NULL, 0, 0);
+  luaL_error(lua, "interrupted!");
+}
+
+static void LuaAction(int i) {
+  // If another SIGINT happens before LuaStop, terminate process (default
+  // action).
+  signal(i, SIG_DFL);
+  LuaStates::Get()->ForEachState([&](lua_State* state) {
+    lua_sethook(state, LuaStop, LUA_MASKCALL | LUA_MASKRET | LUA_MASKCOUNT, 1);
+  });
+}
+
+static int traceback(lua_State* lua) {
+  const char* message = lua_tostring(lua, 1);
+  if (message != nullptr) {
+    luaL_traceback(lua, lua, message, 1);
+  } else if (!lua_isnoneornil(lua, 1)) {
+    // Is there an error object? Try its 'tostring' method.
+    if (!luaL_callmeta(lua, 1, "__tostring")) {
+      lua_pushliteral(lua, "(no error message)");
+    }
+  }
+  return 1;
+}
+
 // C++ Wrapper for the Lua API.
 class Lua {
  public:
@@ -54,12 +122,8 @@ class Lua {
 
   // Initializes the Lua API.
   bool Init() {
-    lua_ = luaL_newstate();
-    if (lua_ == nullptr) {
-      return false;
-    }
-    luaL_openlibs(lua_);
-    return true;
+    lua_ = LuaStates::Get()->Add();
+    return lua_ != nullptr;
   }
 
   // Registers a C function as a global Lua function.
@@ -76,28 +140,75 @@ class Lua {
     if (lua_ == nullptr || file_name == nullptr) {
       return false;
     }
-    if (luaL_dofile(lua_, file_name) != 0) {
-      last_error_ = lua_tostring(lua_, -1);
+    int status = luaL_dofile(lua_, file_name);
+    if (status != 0) {
+      ReportError(status);
       return false;
     }
     return true;
   }
 
+  bool DoLibrary(const char* file_name) {
+    if (lua_ == nullptr || file_name == nullptr) {
+      return false;
+    }
+    lua_getglobal(lua_, "require");
+    lua_pushstring(lua_, file_name);
+    // Call `require(name)`
+    int status = DoCall(1, 1);
+    if (status != LUA_OK) {
+      ReportError(status);
+      return false;
+    }
+    // global[file_name] = require return
+    lua_setglobal(lua_, file_name);
+    return true;
+  }
+
   // Returns the last error pushed by Lua.
   const std::string GetError() {
-    return std::string(last_error_);
+    return last_error_;
   }
 
   // Closes the Lua API.
   void Close() {
     if (lua_ != nullptr) {
-      lua_close(lua_);
+      LuaStates::Get()->Close(lua_);
     }
   }
 
  private:
+  void ReportError(int status) {
+    if (status == LUA_OK || lua_isnil(lua_, -1)) {
+      return;
+    }
+    const char* message = lua_tostring(lua_, -1);
+    if (message == nullptr) {
+      message = "(error object is not a string)";
+    }
+    last_error_ = std::string(message);
+    lua_pop(lua_, 1);
+    // Force a complete garbage collection in case of errors.
+    lua_gc(lua_, LUA_GCCOLLECT, 0);
+  }
+
+  int DoCall(int narg, int nres) {
+    // Function index.
+    int base = lua_gettop(lua_) - narg;
+    // Push traceback function
+    lua_pushcfunction(lua_, traceback);
+    // Put it under chunk and args
+    lua_insert(lua_, base);
+    signal(SIGINT, LuaAction);
+    int status = lua_pcall(lua_, narg, nres, base);
+    signal(SIGINT, SIG_DFL);
+    // Remove traceback function.
+    lua_remove(lua_, base);
+    return status;
+  }
+
   lua_State* lua_;
-  const char* last_error_;
+  std::string last_error_;
 };
 
 // Sends a MIDI note.
@@ -133,6 +244,13 @@ int main(int argc, const char** argv) {
   // Register midi_send function with Lua and store it in the midi_send
   // variable.
   lua.PushCFunction(midi_send, "midi_send");
+
+  // Load the music notation library.
+  if (!lua.DoLibrary("notation")) {
+    std::cerr << "Error loading notation library: "
+              << lua.GetError() << std::endl;
+    return -1;
+  }
 
   // Run the provided Lua file.
   if (!lua.DoFile(argv[1])) {

@@ -1,8 +1,6 @@
-song = require 'notation'
+notation.set_tempo(50)
 
-song.set_tempo(50)
-
-song.part {
+notation.part {
   D3s,  Fs3s, A3s,  D4s,
   A2s,  Cs3s, E3s,  A3s,
   B2s,  D3s,  Fs3s, B3s,
@@ -14,7 +12,7 @@ song.part {
   A2s,  Cs3s, E3s,  A3s,
 }
 
-song.part {
+notation.part {
   Fs4ed,            Fs5s,
   Fs5s, G5s,  Fs5s, E5s,
   D5ed,             D5s,
@@ -26,4 +24,4 @@ song.part {
   A4q
 }
 
-song.go()
+notation.go()
